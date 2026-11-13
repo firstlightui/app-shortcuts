@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Typechecks the plugin's Swift sources, and App Intents generated from tests/Fixtures/ios-shortcuts.php,
+# against the iOS simulator SDK, with HostStubs standing in for the NativePHP host app.
+# Matches the host project's Swift 5 language mode.
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")/.." && pwd)"
+generated="$(mktemp -d)/FirstlightShortcutsGenerated.swift"
+php "$root/tests/Fixtures/generate-ios.php" > "$generated"
+
+cd "$root/resources/ios"
+
+xcrun --sdk iphonesimulator swiftc -typecheck \
+    -swift-version 5 \
+    -target arm64-apple-ios18.0-simulator \
+    Sources/*.swift HostStubs/*.swift "$generated"
+
+echo "iOS sources typecheck."

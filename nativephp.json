@@ -1,0 +1,46 @@
+{
+    "name": "firstlightui/app-shortcuts",
+    "description": "Open a screen of your NativePHP app from Siri, Spotlight, the Shortcuts app and the app icon on iOS, and from launcher shortcuts on Android.",
+    "namespace": "AppShortcuts",
+    "platforms": ["android", "ios"],
+    "bridge_functions": [
+        {
+            "name": "AppShortcuts.Push",
+            "ios": "AppShortcutsFunctions.Push",
+            "android": "dev.firstlightui.plugins.app_shortcuts.AppShortcutsFunctions.Push",
+            "description": "Add or replace a shortcut in the app icon's long-press menu, newest first."
+        },
+        {
+            "name": "AppShortcuts.Remove",
+            "ios": "AppShortcutsFunctions.Remove",
+            "android": "dev.firstlightui.plugins.app_shortcuts.AppShortcutsFunctions.Remove",
+            "description": "Remove a shortcut added with Push."
+        },
+        {
+            "name": "AppShortcuts.Clear",
+            "ios": "AppShortcutsFunctions.Clear",
+            "android": "dev.firstlightui.plugins.app_shortcuts.AppShortcutsFunctions.Clear",
+            "description": "Remove every shortcut added with Push."
+        }
+    ],
+    "hooks": {
+        "post_compile": "nativephp:app-shortcuts:compile"
+    },
+    "android": {
+        "min_version": 26,
+        "permissions": [],
+        "dependencies": {
+            "implementation": []
+        }
+    },
+    "ios": {
+        "init_function": "appShortcutsInit",
+        "min_version": "18.0",
+        "permissions": [],
+        "dependencies": {
+            "swift_packages": [],
+            "pods": []
+        }
+    },
+    "service_provider": "FirstlightUI\\AppShortcuts\\AppShortcutsServiceProvider"
+}

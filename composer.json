@@ -1,0 +1,47 @@
+{
+    "name": "firstlightui/app-shortcuts",
+    "description": "Open a screen of your NativePHP app from Siri, Spotlight, the Shortcuts app and the app icon on iOS, and from launcher shortcuts on Android.",
+    "type": "nativephp-plugin",
+    "license": "MIT",
+    "require": {
+        "php": "^8.4",
+        "nativephp/mobile": "^4.7"
+    },
+    "autoload": {
+        "psr-4": {
+            "FirstlightUI\\AppShortcuts\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "FirstlightUI\\AppShortcuts\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "FirstlightUI\\AppShortcuts\\AppShortcutsServiceProvider"
+            ]
+        },
+        "nativephp": {
+            "manifest": "nativephp.json"
+        }
+    },
+    "minimum-stability": "stable",
+    "require-dev": {
+        "pestphp/pest": "^5.0",
+        "orchestra/testbench": "^11.0",
+        "larastan/larastan": "^3.13",
+        "laravel/pint": "^1.27"
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "scripts": {
+        "test": "pest",
+        "lint": "pint --test",
+        "analyse": "phpstan analyse --no-progress --memory-limit=1G"
+    }
+}
