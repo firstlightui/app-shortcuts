@@ -15,15 +15,19 @@ final class AndroidShortcuts
     /** The scheme of the deep link a shortcut opens. No host, so the path reaches PHP unchanged. */
     public const string SCHEME = 'firstlight-shortcut';
 
+    /** The host of an action's link. Route links have no host. */
+    public const string ACTION_HOST = 'action';
+
     /** Android's prefix for the shortcuts this plugin owns, so they never clash with another plugin's. */
     public const string ID_PREFIX = 'firstlight.';
 
     public const string MAIN_ACTIVITY = 'com.nativephp.mobile.ui.MainActivity';
 
     /**
-     * Every shortcut opens this invisible activity, which hands the link to MainActivity. Android
-     * starts a static shortcut with FLAG_ACTIVITY_CLEAR_TASK, which would otherwise destroy a
-     * running MainActivity and the screen stack PHP is drawing.
+     * Every shortcut opens this invisible activity, which hands a route's link to MainActivity, or
+     * queues an action and brings the app forward to run it. Android starts a static shortcut with
+     * FLAG_ACTIVITY_CLEAR_TASK, which would otherwise destroy a running MainActivity and the screen
+     * stack PHP is drawing.
      */
     public const string TRAMPOLINE = 'dev.firstlightui.plugins.app_shortcuts.ShortcutTrampolineActivity';
 
@@ -57,7 +61,7 @@ final class AndroidShortcuts
             $xml .= "            android:action=\"android.intent.action.VIEW\"\n";
             $xml .= '            android:targetPackage="'.self::attribute($appId)."\"\n";
             $xml .= '            android:targetClass="'.self::TRAMPOLINE."\"\n";
-            $xml .= '            android:data="'.self::attribute(self::uri($shortcut->path))."\" />\n";
+            $xml .= '            android:data="'.self::attribute(self::link($shortcut))."\" />\n";
             $xml .= "    </shortcut>\n";
         }
 
@@ -70,6 +74,22 @@ final class AndroidShortcuts
     public static function uri(string $path): string
     {
         return self::SCHEME.'://'.$path;
+    }
+
+    /**
+     * What a static shortcut hands the trampoline: the deep link of its route, or, for an action,
+     * firstlight-shortcut://action/<id> with the reply the trampoline shows when the action is
+     * queued. The host keeps the two apart, since a route link has none.
+     */
+    public static function link(Shortcut $shortcut): string
+    {
+        if ($shortcut->action === null) {
+            return self::uri((string) $shortcut->path);
+        }
+
+        $link = self::SCHEME.'://'.self::ACTION_HOST.'/'.$shortcut->id;
+
+        return $shortcut->reply === null ? $link : $link.'?reply='.rawurlencode($shortcut->reply);
     }
 
     /**

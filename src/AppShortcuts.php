@@ -4,15 +4,20 @@ declare(strict_types=1);
 
 namespace FirstlightUI\AppShortcuts;
 
+use Carbon\CarbonImmutable;
+use FirstlightUI\AppShortcuts\Events\ActionRan;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
+use Throwable;
 
 /**
  * PHP side of the app-shortcuts native plugin.
  *
- * Shortcuts in config/app-shortcuts.php are compiled into the app at build time. The methods here
- * manage the shortcuts an app adds while it runs, such as a recently opened list. They return
- * whether the native side applied the change: false means the bridge function is missing (no
- * native build, or the plugin is not registered) or reported an error.
+ * Shortcuts in config/app-shortcuts.php are compiled into the app at build time. push(), remove()
+ * and clear() manage the shortcuts an app adds while it runs, such as a recently opened list. They
+ * return whether the native side applied the change: false means the bridge function is missing (no
+ * native build, or the plugin is not registered) or reported an error. runQueuedActions() runs the
+ * actions that shortcuts have queued.
  */
 final class AppShortcuts
 {
@@ -114,22 +119,95 @@ final class AppShortcuts
     }
 
     /**
+     * Run the shortcut actions the native side has queued, oldest first, and return how many ran.
+     *
+     * The service provider calls this when the first screen of a launch mounts and whenever the
+     * native side queues an action while PHP runs, so apps rarely need to. Each invocation leaves the
+     * native queue before its class runs: a class that throws is reported and not retried, and one
+     * invocation never runs twice. An ActionRan event follows each class that returns.
+     */
+    public function runQueuedActions(): int
+    {
+        $queued = $this->request('AppShortcuts.TakeQueued')['invocations'] ?? [];
+
+        if (! is_array($queued) || $queued === []) {
+            return 0;
+        }
+
+        $actions = [];
+
+        foreach ($this->configured() as $shortcut) {
+            if ($shortcut->action !== null) {
+                $actions[$shortcut->id] = $shortcut->action;
+            }
+        }
+
+        $ran = 0;
+
+        foreach ($queued as $entry) {
+            $id = is_array($entry) ? ($entry['id'] ?? null) : null;
+            $shortcutId = is_array($entry) ? ($entry['shortcut'] ?? null) : null;
+            $at = is_array($entry) ? ($entry['at'] ?? null) : null;
+
+            if (! is_string($id) || ! is_string($shortcutId) || ! is_int($at)) {
+                Log::warning('app-shortcuts dropped a malformed queued action.', ['entry' => $entry]);
+
+                continue;
+            }
+
+            // An action removed from config since the build that queued it.
+            if (! isset($actions[$shortcutId])) {
+                Log::warning("app-shortcuts dropped a queued run of [{$shortcutId}], which is no longer an action in config/app-shortcuts.php.");
+
+                continue;
+            }
+
+            $invocation = new ActionInvocation($id, $shortcutId, CarbonImmutable::createFromTimestampMs($at));
+
+            try {
+                $handler = app($actions[$shortcutId]);
+
+                if (! is_callable($handler)) {
+                    throw new InvalidArgumentException("The action of shortcut [{$shortcutId}] is not invokable.");
+                }
+
+                $handler($invocation);
+            } catch (Throwable $e) {
+                report($e);
+
+                continue;
+            }
+
+            $ran++;
+            event(new ActionRan($shortcutId, $id));
+        }
+
+        return $ran;
+    }
+
+    /**
      * @param  array<string, mixed>  $parameters
      */
     private function call(string $method, array $parameters = []): bool
     {
+        return $this->request($method, $parameters) !== null;
+    }
+
+    /**
+     * The decoded result of a bridge function, or null when it is missing or reported an error.
+     *
+     * @param  array<string, mixed>  $parameters
+     * @return array<mixed>|null
+     */
+    private function request(string $method, array $parameters = []): ?array
+    {
         if (! function_exists('nativephp_call')) {
-            return false;
+            return null;
         }
 
         $response = nativephp_call($method, json_encode((object) $parameters, JSON_THROW_ON_ERROR));
+        $decoded = $response === null ? null : json_decode($response, true);
 
-        if ($response === null) {
-            return false;
-        }
-
-        $decoded = json_decode($response, true);
-
-        return is_array($decoded) && ($decoded['status'] ?? null) !== 'error';
+        return is_array($decoded) && ($decoded['status'] ?? null) !== 'error' ? $decoded : null;
     }
 }

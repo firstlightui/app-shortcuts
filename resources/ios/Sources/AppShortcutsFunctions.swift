@@ -51,6 +51,14 @@ enum AppShortcutsFunctions {
         }
     }
 
+    /// AppShortcuts.TakeQueued {} -> {"invocations": [{"id", "shortcut", "at"}]}, oldest first.
+    /// The entries leave the queue, so PHP runs each once.
+    class TakeQueued: BridgeFunction {
+        func execute(parameters: [String: Any]) throws -> [String: Any] {
+            BridgeResponse.success(data: ["invocations": AppShortcutsActions.takeAll()])
+        }
+    }
+
     /// AppShortcuts.Clear {}
     class Clear: BridgeFunction {
         func execute(parameters: [String: Any]) throws -> [String: Any] {

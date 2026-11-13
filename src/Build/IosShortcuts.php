@@ -31,18 +31,33 @@ final class IosShortcuts
         $swift .= "import AppIntents\n";
 
         foreach ($shortcuts as $shortcut) {
+            // An action only queues its id and answers, so the app stays closed; PHP runs it later.
+            $runsAction = $shortcut->action !== null;
+
             $swift .= "\nstruct ".self::intentName($shortcut).": AppIntent {\n";
             $swift .= '    static let title: LocalizedStringResource = '.self::literal($shortcut->title)."\n";
-            $swift .= "    static let openAppWhenRun: Bool = true\n";
+            $swift .= '    static let openAppWhenRun: Bool = '.($runsAction ? 'false' : 'true')."\n";
 
             if ($shortcut->requiresUnlock) {
                 $swift .= "    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication\n";
             }
 
             $swift .= "\n    @MainActor\n";
-            $swift .= "    func perform() async throws -> some IntentResult {\n";
-            $swift .= '        AppShortcutsRouter.open(path: '.self::literal($shortcut->path).")\n";
-            $swift .= "        return .result()\n";
+
+            if (! $runsAction) {
+                $swift .= "    func perform() async throws -> some IntentResult {\n";
+                $swift .= '        AppShortcutsRouter.open(path: '.self::literal((string) $shortcut->path).")\n";
+                $swift .= "        return .result()\n";
+            } elseif ($shortcut->reply === null) {
+                $swift .= "    func perform() async throws -> some IntentResult {\n";
+                $swift .= '        try AppShortcutsActions.enqueue(shortcut: '.self::literal($shortcut->id).")\n";
+                $swift .= "        return .result()\n";
+            } else {
+                $swift .= "    func perform() async throws -> some IntentResult & ProvidesDialog {\n";
+                $swift .= '        try AppShortcutsActions.enqueue(shortcut: '.self::literal($shortcut->id).")\n";
+                $swift .= '        return .result(dialog: '.self::literal($shortcut->reply).")\n";
+            }
+
             $swift .= "    }\n}\n";
         }
 
@@ -105,7 +120,9 @@ final class IosShortcuts
                 $item['UIApplicationShortcutItemIconSymbolName'] = $shortcut->icon;
             }
 
-            $item['UIApplicationShortcutItemUserInfo'] = ['path' => $shortcut->path];
+            $item['UIApplicationShortcutItemUserInfo'] = $shortcut->action !== null
+                ? ['action' => $shortcut->id]
+                : ['path' => $shortcut->path];
             $kept[] = $item;
         }
 

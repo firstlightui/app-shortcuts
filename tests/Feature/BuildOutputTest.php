@@ -3,6 +3,7 @@
 use FirstlightUI\AppShortcuts\Build\AndroidShortcuts;
 use FirstlightUI\AppShortcuts\Build\IosShortcuts;
 use FirstlightUI\AppShortcuts\Shortcut;
+use FirstlightUI\AppShortcuts\Tests\Fixtures\RecordingAction;
 
 function wardRound(): Shortcut
 {
@@ -128,4 +129,40 @@ it('edits the manifest the same way however often the build runs', function () {
     expect($without)->not->toContain('android.app.shortcuts')
         ->and($without)->toContain(AndroidShortcuts::TRAMPOLINE)
         ->and(AndroidShortcuts::manifest($without, false))->toBe($without);
+});
+
+function logWater(?string $reply = 'Logged 1 glass & more'): Shortcut
+{
+    return new Shortcut('log-water', 'Log water', 'Water', null, 'drop', ['Log water in ${applicationName}'], action: RecordingAction::class, reply: $reply);
+}
+
+it('writes action intents that queue their id and answer without opening the app', function () {
+    $swift = IosShortcuts::swift([logWater(), logWater(null), wardRound()]);
+
+    [$withReply, $silent, $route] = array_slice(explode('struct FirstlightShortcut_', $swift), 1);
+
+    expect($withReply)
+        ->toContain('static let openAppWhenRun: Bool = false')
+        ->toContain('.requiresLocalDeviceAuthentication')
+        ->toContain('some IntentResult & ProvidesDialog')
+        ->toContain('try AppShortcutsActions.enqueue(shortcut: "log-water")')
+        ->toContain('return .result(dialog: "Logged 1 glass & more")')
+        ->not->toContain('AppShortcutsRouter.open');
+
+    expect($silent)
+        ->toContain('openAppWhenRun: Bool = false')
+        ->not->toContain('ProvidesDialog')
+        ->toContain('return .result()');
+
+    expect($route)->toContain('openAppWhenRun: Bool = true');
+});
+
+it('gives action quick actions and launcher shortcuts the action id, not a path', function () {
+    expect(IosShortcuts::quickActions([], [logWater()])[0]['UIApplicationShortcutItemUserInfo'])->toBe(['action' => 'log-water']);
+
+    $doc = simplexml_load_string((string) AndroidShortcuts::xml([logWater(), logWater(null)], 'com.example.app'));
+    $android = 'http://schemas.android.com/apk/res/android';
+
+    expect((string) $doc->shortcut[0]->intent->attributes($android)->data)->toBe('firstlight-shortcut://action/log-water?reply=Logged%201%20glass%20%26%20more')
+        ->and((string) $doc->shortcut[1]->intent->attributes($android)->data)->toBe('firstlight-shortcut://action/log-water');
 });

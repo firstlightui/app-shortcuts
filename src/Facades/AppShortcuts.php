@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static bool push(string $id, string $title, string $route, array<string, mixed> $parameters = [], ?string $icon = null, ?string $shortTitle = null)
  * @method static bool remove(string $id)
  * @method static bool clear()
+ * @method static int runQueuedActions()
  *
  * @see \FirstlightUI\AppShortcuts\AppShortcuts
  */

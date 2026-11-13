@@ -1,6 +1,7 @@
 <?php
 
 use FirstlightUI\AppShortcuts\Facades\AppShortcuts;
+use FirstlightUI\AppShortcuts\Tests\Fixtures\RecordingAction;
 
 function shortcutsConfig(array $shortcuts): void
 {
@@ -24,6 +25,16 @@ it('resolves each shortcut to the path of its named route', function () {
         ->and($shortcuts[1]->launcher)->toBeFalse();
 });
 
+it('makes an action shortcut that runs a class instead of opening a route', function () {
+    shortcutsConfig(['log-water' => ['title' => 'Log water', 'action' => RecordingAction::class, 'reply' => 'Logged a glass']]);
+
+    $shortcut = AppShortcuts::configured()[0];
+
+    expect($shortcut->path)->toBeNull()
+        ->and($shortcut->action)->toBe(RecordingAction::class)
+        ->and($shortcut->reply)->toBe('Logged a glass');
+});
+
 it('rejects shortcut config the platforms would refuse or silently drop', function (array $shortcuts, string $message) {
     shortcutsConfig($shortcuts);
 
@@ -39,6 +50,13 @@ it('rejects shortcut config the platforms would refuse or silently drop', functi
     'icon that is not a symbol name' => [['x' => ['title' => 'X', 'route' => 'ward-round', 'icon' => 'plus circle']], 'SF Symbol'],
     'misspelt option' => [['x' => ['title' => 'X', 'route' => 'ward-round', 'phrase' => ['${applicationName}']]], 'unknown keys: phrase'],
     'list instead of map' => [[['title' => 'X', 'route' => 'ward-round']], 'map each shortcut id'],
+    'route and action' => [['x' => ['title' => 'X', 'route' => 'ward-round', 'action' => RecordingAction::class]], 'either a route name or an action class'],
+    'neither route nor action' => [['x' => ['title' => 'X']], 'either a route name or an action class'],
+    'action that is not a class' => [['x' => ['title' => 'X', 'action' => 'App\\Actions\\Missing']], 'must be an invokable class'],
+    'action class that is not invokable' => [['x' => ['title' => 'X', 'action' => stdClass::class]], 'must be an invokable class'],
+    'reply on a route' => [['x' => ['title' => 'X', 'route' => 'ward-round', 'reply' => 'Done']], 'only actions answer'],
+    'route parameters on an action' => [['x' => ['title' => 'X', 'action' => RecordingAction::class, 'parameters' => ['a' => 1]]], 'takes no route parameters'],
+    'two-line reply' => [['x' => ['title' => 'X', 'action' => RecordingAction::class, 'reply' => "A\nB"]], 'reply of shortcut [x] must be one line'],
 ]);
 
 it('keeps within Apple\'s ten spoken shortcuts and four quick actions', function () {

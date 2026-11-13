@@ -1,6 +1,6 @@
 {
     "name": "firstlightui/app-shortcuts",
-    "description": "Open a screen of your NativePHP app from Siri, Spotlight, the Shortcuts app and the app icon on iOS, and from launcher shortcuts on Android.",
+    "description": "Open a screen or run a PHP action of your NativePHP app from Siri, Spotlight, the Shortcuts app and the app icon on iOS, and from launcher shortcuts on Android.",
     "namespace": "AppShortcuts",
     "platforms": ["android", "ios"],
     "bridge_functions": [
@@ -21,6 +21,12 @@
             "ios": "AppShortcutsFunctions.Clear",
             "android": "dev.firstlightui.plugins.app_shortcuts.AppShortcutsFunctions.Clear",
             "description": "Remove every shortcut added with Push."
+        },
+        {
+            "name": "AppShortcuts.TakeQueued",
+            "ios": "AppShortcutsFunctions.TakeQueued",
+            "android": "dev.firstlightui.plugins.app_shortcuts.AppShortcutsFunctions.TakeQueued",
+            "description": "Return the shortcut actions waiting to run, oldest first, and empty the queue."
         }
     ],
     "hooks": {

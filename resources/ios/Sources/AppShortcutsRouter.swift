@@ -22,12 +22,20 @@ enum AppShortcutsRouter {
 
         observer = NotificationCenter.default.addObserver(forName: .didReceiveShortcutItem, object: nil, queue: .main) { notification in
             guard let item = notification.userInfo?["shortcutItem"] as? UIApplicationShortcutItem,
-                  item.type.hasPrefix(quickActionPrefix),
-                  let path = item.userInfo?["path"] as? String else {
+                  item.type.hasPrefix(quickActionPrefix) else {
                 return
             }
 
-            open(path: path)
+            // A quick action always opens the app; an action runs on the screen already showing.
+            if let action = item.userInfo?["action"] as? String {
+                do {
+                    try AppShortcutsActions.enqueue(shortcut: action)
+                } catch {
+                    DebugLogger.shared.log("⚡️ app-shortcuts: could not queue \(action): \(error)")
+                }
+            } else if let path = item.userInfo?["path"] as? String {
+                open(path: path)
+            }
         }
     }
 

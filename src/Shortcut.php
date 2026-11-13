@@ -10,10 +10,11 @@ use Symfony\Component\Routing\Exception\RouteNotFoundException;
 use Throwable;
 
 /**
- * One shortcut: a title and the app route it opens.
+ * One shortcut: a title and either the app route it opens or the action it runs.
  *
- * The path is resolved from a named route when the shortcut is made, so the native side only ever
- * receives a path such as `/tasks/create`, which it opens like any other deep link.
+ * A route is resolved to a path when the shortcut is made, so the native side only ever receives a
+ * path such as `/tasks/create`, which it opens like any other deep link. An action is an invokable
+ * class; the native side only queues the shortcut's id, and PHP runs the class when it takes the queue.
  */
 final readonly class Shortcut
 {
@@ -32,24 +33,38 @@ final readonly class Shortcut
         public string $id,
         public string $title,
         public string $shortTitle,
-        public string $path,
+        public ?string $path,
         public ?string $icon = null,
         public array $phrases = [],
         public bool $launcher = true,
         public bool $requiresUnlock = true,
+        public ?string $action = null,
+        public ?string $reply = null,
     ) {
         if (preg_match(self::ID_PATTERN, $id) !== 1 || strlen($id) > 64) {
             throw new InvalidArgumentException("The shortcut id [{$id}] must be lowercase letters and digits joined by single hyphens, such as new-task, and at most 64 characters.");
         }
 
-        foreach (['title' => $title, 'short title' => $shortTitle] as $field => $text) {
+        foreach (array_filter(['title' => $title, 'short title' => $shortTitle, 'reply' => $reply], is_string(...)) as $field => $text) {
             if (trim($text) === '' || preg_match('/[\x00-\x1F\x7F]/', $text) === 1) {
                 throw new InvalidArgumentException("The {$field} of shortcut [{$id}] must be one line of text.");
             }
         }
 
-        if (! str_starts_with($path, '/') || str_starts_with($path, '//') || preg_match('/[\s\x00-\x1F\x7F]/', $path) === 1) {
+        if (($path === null) === ($action === null)) {
+            throw new InvalidArgumentException("Shortcut [{$id}] must either open a route or run an action, not both or neither.");
+        }
+
+        if ($path !== null && (! str_starts_with($path, '/') || str_starts_with($path, '//') || preg_match('/[\s\x00-\x1F\x7F]/', $path) === 1)) {
             throw new InvalidArgumentException("Shortcut [{$id}] must open an app path such as /tasks/create, not [{$path}].");
+        }
+
+        if ($action !== null && (! class_exists($action) || ! method_exists($action, '__invoke'))) {
+            throw new InvalidArgumentException("The action of shortcut [{$id}] must be an invokable class, and [{$action}] is not.");
+        }
+
+        if ($reply !== null && $action === null) {
+            throw new InvalidArgumentException("Shortcut [{$id}] opens a route, so it has no reply; only actions answer without opening the app.");
         }
 
         if ($icon !== null && preg_match('/^[a-z0-9]+(?:\.[a-z0-9]+)*$/', $icon) !== 1) {
@@ -75,7 +90,7 @@ final readonly class Shortcut
      */
     public static function fromConfig(string $id, array $config): self
     {
-        $unknown = array_diff(array_keys($config), ['title', 'short_title', 'route', 'parameters', 'icon', 'phrases', 'launcher', 'requires_unlock']);
+        $unknown = array_diff(array_keys($config), ['title', 'short_title', 'route', 'parameters', 'action', 'reply', 'icon', 'phrases', 'launcher', 'requires_unlock']);
 
         if ($unknown !== []) {
             throw new InvalidArgumentException("Shortcut [{$id}] has unknown keys: ".implode(', ', $unknown).'.');
@@ -83,9 +98,17 @@ final readonly class Shortcut
 
         $title = $config['title'] ?? null;
         $route = $config['route'] ?? null;
+        $action = $config['action'] ?? null;
 
-        if (! is_string($title) || ! is_string($route)) {
-            throw new InvalidArgumentException("Shortcut [{$id}] needs a title and a route name.");
+        $opensRoute = is_string($route) && $action === null;
+        $runsAction = is_string($action) && $route === null;
+
+        if (! is_string($title) || ! ($opensRoute || $runsAction)) {
+            throw new InvalidArgumentException("Shortcut [{$id}] needs a title and either a route name or an action class.");
+        }
+
+        if ($action !== null && array_key_exists('parameters', $config)) {
+            throw new InvalidArgumentException("Shortcut [{$id}] runs an action, so it takes no route parameters.");
         }
 
         $phrases = $config['phrases'] ?? [];
@@ -98,11 +121,13 @@ final readonly class Shortcut
             id: $id,
             title: $title,
             shortTitle: self::optionalString($config, 'short_title', $id) ?? $title,
-            path: self::path($id, $route, $config['parameters'] ?? []),
+            path: $opensRoute ? self::path($id, $route, $config['parameters'] ?? []) : null,
             icon: self::optionalString($config, 'icon', $id),
             phrases: $phrases,
             launcher: self::bool($config, 'launcher', $id),
             requiresUnlock: self::bool($config, 'requires_unlock', $id),
+            action: $runsAction ? $action : null,
+            reply: self::optionalString($config, 'reply', $id),
         );
     }
 

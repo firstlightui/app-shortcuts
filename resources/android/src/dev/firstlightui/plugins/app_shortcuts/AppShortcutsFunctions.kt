@@ -76,6 +76,12 @@ object AppShortcutsFunctions {
         }
     }
 
+    /** AppShortcuts.TakeQueued {} -> {"invocations": [{"id", "shortcut", "at"}]}, oldest first, leaving the queue empty. */
+    class TakeQueued(private val activity: FragmentActivity) : BridgeFunction {
+        override fun execute(parameters: Map<String, Any>): Map<String, Any> =
+            BridgeResponse.success(mapOf("invocations" to ShortcutActions.takeAll(activity)))
+    }
+
     /** AppShortcuts.Clear {}. Removes this plugin's dynamic shortcuts only. */
     class Clear(private val activity: FragmentActivity) : BridgeFunction {
         override fun execute(parameters: Map<String, Any>): Map<String, Any> =
