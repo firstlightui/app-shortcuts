@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace FirstlightUI\AppShortcuts;
 
 use FirstlightUI\AppShortcuts\Console\CompileShortcutsCommand;
+use FirstlightUI\AppShortcuts\Console\RunActionCommand;
 use FirstlightUI\AppShortcuts\Events\ActionsQueued;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
@@ -40,6 +41,14 @@ final class AppShortcutsServiceProvider extends ServiceProvider
         Event::listen(ActionsQueued::class, function (): void {
             $this->app->make(AppShortcuts::class)->runQueuedActions();
         });
+
+        // The native side runs app-shortcuts:run through NativePHP's in-app runtimes, which are not
+        // always marked as running in the console, so it is registered everywhere.
+        $this->commands([RunActionCommand::class]);
+
+        // Symfony Console reads PHP_SELF as it starts. NativePHP 4.7's persistent artisan on iOS does
+        // not set it, and only a web request does, so a shortcut that boots PHP cold would fail.
+        $_SERVER['PHP_SELF'] ??= 'artisan.php';
 
         if ($this->app->runningInConsole()) {
             $this->commands([CompileShortcutsCommand::class]);

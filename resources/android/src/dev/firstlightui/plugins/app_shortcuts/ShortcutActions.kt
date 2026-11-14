@@ -1,21 +1,32 @@
 package dev.firstlightui.plugins.app_shortcuts
 
 import android.content.Context
-import com.nativephp.mobile.ui.nativerender.NativeElementBridge
+import android.util.Log
+import com.nativephp.mobile.bridge.LaravelEnvironment
+import com.nativephp.mobile.bridge.PHPBridge
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
 /**
- * The queue of shortcut actions waiting for PHP, matching resources/ios/Sources/AppShortcutsActions.swift.
+ * Runs shortcut actions in PHP without opening the app, and keeps the queue of those PHP has yet to
+ * run, matching resources/ios/Sources/AppShortcutsActions.swift.
  *
- * The trampoline writes on the main thread and AppShortcuts.TakeQueued reads on the PHP thread, so
- * both hold this object's lock. commit() rather than apply(), so an entry is on disk before the
- * trampoline reports it queued.
+ * An action runs in NativePHP's ephemeral runtime, the PHP context it offers plugins for background
+ * work: beside the app's own PHP when that is up, or booted on its own when the app is closed.
+ *
+ * The trampoline queues an action before running it, and run() takes it back out just before PHP
+ * starts on it. If Android ends the process first, the action is still queued, and PHP takes the
+ * queue through AppShortcuts.TakeQueued when the app next opens. Either way it runs at most once.
+ *
+ * The queue is written on the main thread, a run thread and the PHP thread, so each change holds
+ * this object's lock. commit() rather than apply(), so an entry is on disk when the call returns.
  */
 object ShortcutActions {
-    /** Matches FirstlightUI\AppShortcuts\Events\ActionsQueued in PHP. */
-    const val QUEUED_EVENT = "FirstlightUI\\AppShortcuts\\Events\\ActionsQueued"
+    private const val TAG = "AppShortcuts"
+
+    /** Matches RunActionCommand::RESULT_PREFIX in PHP. */
+    private const val RESULT_PREFIX = "app-shortcuts-result:"
 
     private const val PREFERENCES = "firstlight_app_shortcuts"
     private const val KEY = "queued_actions"
@@ -23,21 +34,78 @@ object ShortcutActions {
     /** The oldest entries are dropped past this, so a queue nobody drains cannot grow without end. */
     private const val LIMIT = 100
 
+    private val runLock = Any()
+
+    sealed interface Outcome {
+        /** The action's class ran; reply is what PHP or config says to show. */
+        data class Ran(val reply: String?) : Outcome
+
+        /** The action's class threw. It is not retried. */
+        data object Failed : Outcome
+
+        /** PHP could not start, so the action stays queued for the next time the app opens. */
+        data object Queued : Outcome
+    }
+
+    /** Queues one run of an action and returns its invocation id. */
     @Synchronized
-    fun enqueue(context: Context, shortcut: String) {
+    fun enqueue(context: Context, shortcut: String): String {
+        val id = UUID.randomUUID().toString()
         val entries = read(context)
-        entries.put(
-            JSONObject()
-                .put("id", UUID.randomUUID().toString())
-                .put("shortcut", shortcut)
-                .put("at", System.currentTimeMillis()),
-        )
+        entries.put(JSONObject().put("id", id).put("shortcut", shortcut).put("at", System.currentTimeMillis()))
 
         while (entries.length() > LIMIT) {
             entries.remove(0)
         }
 
-        preferences(context).edit().putString(KEY, entries.toString()).commit()
+        save(context, entries)
+
+        return id
+    }
+
+    /**
+     * Runs a queued invocation now, on the calling thread, which must not be the main thread.
+     * Booting PHP with the app closed takes a second or more.
+     */
+    fun run(context: Context, id: String): Outcome = synchronized(runLock) {
+        val appContext = context.applicationContext
+        val bridge = PHPBridge(appContext)
+
+        val booted = try {
+            // With the app closed, this sets up PHP's environment and unpacks the Laravel bundle
+            // if needed, as NativePHP does for its own background work. A no-op when the app is up.
+            LaravelEnvironment(appContext).initializeForBackground()
+            bridge.ensureRuntimeInitialized()
+            bridge.nativeEphemeralBoot("${bridge.getLaravelPath()}/vendor/nativephp/mobile/bootstrap/android/persistent.php") == 0
+        } catch (e: RuntimeException) {
+            Log.e(TAG, "Could not start PHP for a shortcut action", e)
+            false
+        }
+
+        if (!booted) {
+            return Outcome.Queued
+        }
+
+        try {
+            // Taken out only now, so it is still queued if anything above failed or the process ends.
+            val entry = claim(appContext, id) ?: return Outcome.Ran(null)
+            val output = bridge.nativeEphemeralArtisan(
+                "app-shortcuts:run --shortcut=${entry.getString("shortcut")} --id=${entry.getString("id")} --at=${entry.getLong("at")}",
+            )
+
+            val result = output.lineSequence().lastOrNull { it.startsWith(RESULT_PREFIX) }
+                ?.let { runCatching { JSONObject(it.removePrefix(RESULT_PREFIX)) }.getOrNull() }
+
+            if (result?.optBoolean("ran") != true) {
+                Log.w(TAG, "Shortcut action failed: ${output.takeLast(300)}")
+                return Outcome.Failed
+            }
+
+            Outcome.Ran(result.optString("reply").takeIf { !result.isNull("reply") && it.isNotBlank() })
+        } finally {
+            // With the app closed this ends the PHP it booted, so a launch afterwards boots its own.
+            bridge.nativeEphemeralShutdown()
+        }
     }
 
     /** Every queued entry, oldest first, leaving the queue empty. */
@@ -59,20 +127,28 @@ object ShortcutActions {
         }
     }
 
-    /**
-     * Tells a live native screen that actions are waiting. False when no native screen session is
-     * live, such as before PHP has booted: the app has to open for the action to run.
-     */
-    fun wakePhp(): Boolean = try {
-        NativeElementBridge.postNativeEventToQueue(QUEUED_EVENT, "{}")
-    } catch (e: LinkageError) {
-        false
+    /** Takes one entry out of the queue, or null when PHP has already taken it. */
+    @Synchronized
+    private fun claim(context: Context, id: String): JSONObject? {
+        val entries = read(context)
+        val index = (0 until entries.length()).firstOrNull { entries.optJSONObject(it)?.optString("id") == id }
+            ?: return null
+
+        val entry = entries.getJSONObject(index)
+        entries.remove(index)
+        save(context, entries)
+
+        return entry
     }
 
     private fun read(context: Context): JSONArray = try {
         JSONArray(preferences(context).getString(KEY, null) ?: "[]")
     } catch (e: org.json.JSONException) {
         JSONArray()
+    }
+
+    private fun save(context: Context, entries: JSONArray) {
+        preferences(context).edit().putString(KEY, entries.toString()).commit()
     }
 
     private fun preferences(context: Context) =

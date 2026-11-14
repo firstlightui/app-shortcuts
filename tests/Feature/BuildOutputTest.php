@@ -136,25 +136,22 @@ function logWater(?string $reply = 'Logged 1 glass & more'): Shortcut
     return new Shortcut('log-water', 'Log water', 'Water', null, 'drop', ['Log water in ${applicationName}'], action: RecordingAction::class, reply: $reply);
 }
 
-it('writes action intents that queue their id and answer without opening the app', function () {
+it('writes action intents that run PHP with the app closed and say its reply', function () {
     $swift = IosShortcuts::swift([logWater(), logWater(null), wardRound()]);
 
-    [$withReply, $silent, $route] = array_slice(explode('struct FirstlightShortcut_', $swift), 1);
+    [$withReply, $withoutReply, $route] = array_slice(explode('struct FirstlightShortcut_', $swift), 1);
 
     expect($withReply)
         ->toContain('static let openAppWhenRun: Bool = false')
         ->toContain('.requiresLocalDeviceAuthentication')
         ->toContain('some IntentResult & ProvidesDialog')
-        ->toContain('try AppShortcutsActions.enqueue(shortcut: "log-water")')
-        ->toContain('return .result(dialog: "Logged 1 glass & more")')
+        ->toContain('let reply = try await AppShortcutsActions.perform(shortcut: "log-water", reply: "Logged 1 glass & more")')
+        ->toContain('return .result(dialog: IntentDialog(stringLiteral: reply))')
         ->not->toContain('AppShortcutsRouter.open');
 
-    expect($silent)
-        ->toContain('openAppWhenRun: Bool = false')
-        ->not->toContain('ProvidesDialog')
-        ->toContain('return .result()');
+    expect($withoutReply)->toContain('AppShortcutsActions.perform(shortcut: "log-water", reply: nil)');
 
-    expect($route)->toContain('openAppWhenRun: Bool = true');
+    expect($route)->toContain('openAppWhenRun: Bool = true')->not->toContain('ProvidesDialog');
 });
 
 it('gives action quick actions and launcher shortcuts the action id, not a path', function () {

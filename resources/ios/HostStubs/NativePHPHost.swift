@@ -2,7 +2,7 @@ import Foundation
 
 // Stand-ins for NativePHP host types, used only by bin/typecheck-ios. Signatures copied from
 // nativephp/mobile 4.7 resources/xcode/NativePHP/{Bridge/BridgeRouter,AppDelegate,DeepLinkRouter,DebugLogger,
-// NativeRender/NativeElementBridge}.swift.
+// NativeRender/NativeElementBridge,Bridge/PersistentPHPRuntime,AppUpdateManager}.swift.
 // Keep them in sync when upgrading NativePHP; a real device build is the final check.
 
 protocol BridgeFunction {
@@ -39,5 +39,27 @@ final class NativeElementBridge {
     @discardableResult
     static func sendNativeEvent(eventName: String, payloadJson: String) -> Bool {
         false
+    }
+}
+
+final class PersistentPHPRuntime {
+    static let shared = PersistentPHPRuntime()
+
+    private(set) var isBooted = false
+
+    func boot() -> Bool {
+        false
+    }
+
+    func artisan(command: String) -> String {
+        ""
+    }
+}
+
+class AppUpdateManager {
+    static let shared = AppUpdateManager()
+
+    func getAppPath() -> String {
+        ""
     }
 }

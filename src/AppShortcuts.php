@@ -16,8 +16,8 @@ use Throwable;
  * Shortcuts in config/app-shortcuts.php are compiled into the app at build time. push(), remove()
  * and clear() manage the shortcuts an app adds while it runs, such as a recently opened list. They
  * return whether the native side applied the change: false means the bridge function is missing (no
- * native build, or the plugin is not registered) or reported an error. runQueuedActions() runs the
- * actions that shortcuts have queued.
+ * native build, or the plugin is not registered) or reported an error. run() and
+ * runQueuedActions() run shortcut actions.
  */
 final class AppShortcuts
 {
@@ -119,12 +119,43 @@ final class AppShortcuts
     }
 
     /**
+     * Run one shortcut action's class and return the reply for Siri or Android to show: the string
+     * the class returned, or else the shortcut's configured reply. An ActionRan event follows.
+     *
+     * The plugin calls this as the shortcut fires, through the app-shortcuts:run command, and for
+     * each queued invocation. Whatever the class throws reaches the caller.
+     */
+    public function run(ActionInvocation $invocation): ?string
+    {
+        $shortcut = $this->action($invocation->shortcutId);
+
+        if ($shortcut === null || $shortcut->action === null) {
+            throw new InvalidArgumentException("[{$invocation->shortcutId}] is not an action in config/app-shortcuts.php.");
+        }
+
+        $handler = app($shortcut->action);
+
+        if (! is_callable($handler)) {
+            throw new InvalidArgumentException("The action of shortcut [{$shortcut->id}] is not invokable.");
+        }
+
+        $result = $handler($invocation);
+        event(new ActionRan($shortcut->id, $invocation->id));
+
+        $reply = is_string($result) ? trim((string) preg_replace('/\s+/', ' ', $result)) : '';
+
+        return $reply !== '' ? $reply : $shortcut->reply;
+    }
+
+    /**
      * Run the shortcut actions the native side has queued, oldest first, and return how many ran.
      *
-     * The service provider calls this when the first screen of a launch mounts and whenever the
-     * native side queues an action while PHP runs, so apps rarely need to. Each invocation leaves the
-     * native queue before its class runs: a class that throws is reported and not retried, and one
-     * invocation never runs twice. An ActionRan event follows each class that returns.
+     * Actions are queued when PHP could not run them as the shortcut fired, such as on iOS when the
+     * app was closed and its Laravel bundle had still to be unpacked. The service provider calls
+     * this when the first screen of a launch mounts and whenever the native side queues an action
+     * while PHP runs, so apps rarely need to. Each invocation leaves the native queue before its
+     * class runs: a class that throws is reported and not retried, and one invocation never runs
+     * twice.
      */
     public function runQueuedActions(): int
     {
@@ -132,14 +163,6 @@ final class AppShortcuts
 
         if (! is_array($queued) || $queued === []) {
             return 0;
-        }
-
-        $actions = [];
-
-        foreach ($this->configured() as $shortcut) {
-            if ($shortcut->action !== null) {
-                $actions[$shortcut->id] = $shortcut->action;
-            }
         }
 
         $ran = 0;
@@ -156,33 +179,32 @@ final class AppShortcuts
             }
 
             // An action removed from config since the build that queued it.
-            if (! isset($actions[$shortcutId])) {
+            if ($this->action($shortcutId)?->action === null) {
                 Log::warning("app-shortcuts dropped a queued run of [{$shortcutId}], which is no longer an action in config/app-shortcuts.php.");
 
                 continue;
             }
 
-            $invocation = new ActionInvocation($id, $shortcutId, CarbonImmutable::createFromTimestampMs($at));
-
             try {
-                $handler = app($actions[$shortcutId]);
-
-                if (! is_callable($handler)) {
-                    throw new InvalidArgumentException("The action of shortcut [{$shortcutId}] is not invokable.");
-                }
-
-                $handler($invocation);
+                $this->run(new ActionInvocation($id, $shortcutId, CarbonImmutable::createFromTimestampMs($at)));
+                $ran++;
             } catch (Throwable $e) {
                 report($e);
-
-                continue;
             }
-
-            $ran++;
-            event(new ActionRan($shortcutId, $id));
         }
 
         return $ran;
+    }
+
+    private function action(string $id): ?Shortcut
+    {
+        foreach ($this->configured() as $shortcut) {
+            if ($shortcut->id === $id) {
+                return $shortcut;
+            }
+        }
+
+        return null;
     }
 
     /**

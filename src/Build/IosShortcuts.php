@@ -31,7 +31,7 @@ final class IosShortcuts
         $swift .= "import AppIntents\n";
 
         foreach ($shortcuts as $shortcut) {
-            // An action only queues its id and answers, so the app stays closed; PHP runs it later.
+            // An action runs in PHP with the app kept closed, and Siri says the reply PHP returns.
             $runsAction = $shortcut->action !== null;
 
             $swift .= "\nstruct ".self::intentName($shortcut).": AppIntent {\n";
@@ -44,18 +44,16 @@ final class IosShortcuts
 
             $swift .= "\n    @MainActor\n";
 
-            if (! $runsAction) {
+            if ($runsAction) {
+                $reply = $shortcut->reply === null ? 'nil' : self::literal($shortcut->reply);
+
+                $swift .= "    func perform() async throws -> some IntentResult & ProvidesDialog {\n";
+                $swift .= '        let reply = try await AppShortcutsActions.perform(shortcut: '.self::literal($shortcut->id).", reply: {$reply})\n";
+                $swift .= "        return .result(dialog: IntentDialog(stringLiteral: reply))\n";
+            } else {
                 $swift .= "    func perform() async throws -> some IntentResult {\n";
                 $swift .= '        AppShortcutsRouter.open(path: '.self::literal((string) $shortcut->path).")\n";
                 $swift .= "        return .result()\n";
-            } elseif ($shortcut->reply === null) {
-                $swift .= "    func perform() async throws -> some IntentResult {\n";
-                $swift .= '        try AppShortcutsActions.enqueue(shortcut: '.self::literal($shortcut->id).")\n";
-                $swift .= "        return .result()\n";
-            } else {
-                $swift .= "    func perform() async throws -> some IntentResult & ProvidesDialog {\n";
-                $swift .= '        try AppShortcutsActions.enqueue(shortcut: '.self::literal($shortcut->id).")\n";
-                $swift .= '        return .result(dialog: '.self::literal($shortcut->reply).")\n";
             }
 
             $swift .= "    }\n}\n";
