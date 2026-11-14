@@ -140,6 +140,13 @@ it('runs one action from the command line the native side sends, with PHP booted
     $phpSelf = $_SERVER['PHP_SELF'];
     unset($_SERVER['PHP_SELF']);
 
+    // NativePHP's iOS queue worker runs `queue:work --quiet` on another thread, and Symfony Console
+    // marks that in the process-wide SHELL_VERBOSITY while it runs. A thread of its own has no copy of
+    // it in $_ENV or $_SERVER, so Symfony reads the process's.
+    $verbosity = [$_ENV['SHELL_VERBOSITY'] ?? null, $_SERVER['SHELL_VERBOSITY'] ?? null, getenv('SHELL_VERBOSITY')];
+    unset($_ENV['SHELL_VERBOSITY'], $_SERVER['SHELL_VERBOSITY']);
+    putenv('SHELL_VERBOSITY=-1');
+
     try {
         (new AppShortcutsServiceProvider($this->app))->boot();
         Runtime::boot($this->app);
@@ -147,6 +154,8 @@ it('runs one action from the command line the native side sends, with PHP booted
         expect(Runtime::artisan('app-shortcuts:run --shortcut=log-water --id=f0e1-2a --at=1794600000123'))
             ->toBe(RunActionCommand::RESULT_PREFIX.'{"ran":true,"reply":"Logged 250 ml"}'.PHP_EOL);
     } finally {
+        [$_ENV['SHELL_VERBOSITY'], $_SERVER['SHELL_VERBOSITY']] = $verbosity;
+        putenv($verbosity[2] === false ? 'SHELL_VERBOSITY' : 'SHELL_VERBOSITY='.$verbosity[2]);
         $_SERVER['PHP_SELF'] = $phpSelf;
     }
 

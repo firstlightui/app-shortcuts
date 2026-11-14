@@ -9,11 +9,15 @@ class PHPBridge(private val context: Context) {
     external fun nativeEphemeralArtisan(command: String): String
     external fun nativeEphemeralShutdown()
 
-    fun ensureRuntimeInitialized() {}
+    fun bootPersistentRuntime(): Boolean = false
 
     fun getLaravelPath(): String = ""
 }
 
 class LaravelEnvironment(private val context: Context) {
     fun initializeForBackground() {}
+
+    companion object {
+        fun getRuntimeMode(context: Context): String = "persistent"
+    }
 }

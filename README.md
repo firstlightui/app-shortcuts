@@ -101,10 +101,13 @@ When the class runs:
 | Siri, Spotlight, the Shortcuts app, the Action button | The class runs straight away and Siri says its reply. The app stays out of sight, even when it was closed: iOS starts it in the background and the plugin boots PHP there, in about two seconds. | No equivalent. |
 | The long-press menu | The app opens and the class runs on the screen it shows. | The class runs straight away in the background, whether or not the app was running, and its reply shows as a toast. |
 
-PHP is the app's own: when the app opens after an action, it finds PHP running and carries on. The action is queued instead, and runs on the first screen of the next launch, when PHP can't start in the background:
+PHP is the app's own, and boots once. If the app opens while an action is booting PHP, its splash screen waits a moment and then finds PHP running. An action used while the app is starting waits for the app's PHP instead of booting a second one.
+
+The action is queued instead, and runs on the first screen of the next launch, when PHP can't start in the background:
 
 - On iOS, in a debug build, which unpacks its Laravel bundle at every launch, and after an over-the-air update until the app has opened once, since unpacking needs setup NativePHP keeps private.
-- On Android, when PHP fails to boot; the app then opens to run it.
+- In an app using NativePHP's classic runtime mode.
+- When PHP fails to boot, or the app takes more than about 10 seconds to boot it. On Android the app then opens to run it.
 
 So `invokedAt` can occasionally be minutes or days old. Record it rather than the time the class runs, and skip actions that only make sense straight away, such as starting a timer, when it is old.
 

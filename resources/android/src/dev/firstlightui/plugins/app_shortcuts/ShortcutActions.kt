@@ -12,8 +12,14 @@ import java.util.UUID
  * Runs shortcut actions in PHP without opening the app, and keeps the queue of those PHP has yet to
  * run, matching resources/ios/Sources/AppShortcutsActions.swift.
  *
- * An action runs in NativePHP's ephemeral runtime, the PHP context it offers plugins for background
- * work: beside the app's own PHP when that is up, or booted on its own when the app is closed.
+ * An action runs in the app's own PHP, booted here when the app is closed. NativePHP boots it under a
+ * process-wide lock and reuses a runtime that is already up, so this is boot or wait in both
+ * directions: an app opened while an action boots PHP waits on the lock and then finds PHP running,
+ * and an action used while the app boots waits for the app's PHP. The runtime then stays up, as
+ * NativePHP leaves it when a plugin's foreground service outlives the activity, for the app to reuse.
+ *
+ * The action itself runs in NativePHP's ephemeral runtime, a PHP context on this thread beside the
+ * app's: a live native screen keeps the app's PHP thread busy with its run loop.
  *
  * The trampoline queues an action before running it, and run() takes it back out just before PHP
  * starts on it. If Android ends the process first, the action is still queued, and PHP takes the
@@ -71,12 +77,16 @@ object ShortcutActions {
         val appContext = context.applicationContext
         val bridge = PHPBridge(appContext)
 
+        // A classic-mode app runs PHP per request and never boots the persistent runtime.
+        if (LaravelEnvironment.getRuntimeMode(appContext) == "classic") {
+            return Outcome.Queued
+        }
+
         val booted = try {
             // With the app closed, this sets up PHP's environment and unpacks the Laravel bundle
-            // if needed, as NativePHP does for its own background work. A no-op when the app is up.
+            // if needed, as NativePHP does for its own background work. A no-op when PHP is up.
             LaravelEnvironment(appContext).initializeForBackground()
-            bridge.ensureRuntimeInitialized()
-            bridge.nativeEphemeralBoot("${bridge.getLaravelPath()}/vendor/nativephp/mobile/bootstrap/android/persistent.php") == 0
+            bridge.bootPersistentRuntime()
         } catch (e: RuntimeException) {
             Log.e(TAG, "Could not start PHP for a shortcut action", e)
             false
@@ -86,26 +96,31 @@ object ShortcutActions {
             return Outcome.Queued
         }
 
-        try {
+        if (bridge.nativeEphemeralBoot(bridge.getLaravelPath() + "/vendor/nativephp/mobile/bootstrap/android/persistent.php") != 0) {
+            return Outcome.Queued
+        }
+
+        val output = try {
             // Taken out only now, so it is still queued if anything above failed or the process ends.
             val entry = claim(appContext, id) ?: return Outcome.Ran(null)
-            val output = bridge.nativeEphemeralArtisan(
+
+            bridge.nativeEphemeralArtisan(
                 "app-shortcuts:run --shortcut=${entry.getString("shortcut")} --id=${entry.getString("id")} --at=${entry.getLong("at")}",
             )
-
-            val result = output.lineSequence().lastOrNull { it.startsWith(RESULT_PREFIX) }
-                ?.let { runCatching { JSONObject(it.removePrefix(RESULT_PREFIX)) }.getOrNull() }
-
-            if (result?.optBoolean("ran") != true) {
-                Log.w(TAG, "Shortcut action failed: ${output.takeLast(300)}")
-                return Outcome.Failed
-            }
-
-            Outcome.Ran(result.optString("reply").takeIf { !result.isNull("reply") && it.isNotBlank() })
         } finally {
-            // With the app closed this ends the PHP it booted, so a launch afterwards boots its own.
+            // Ends only this thread's PHP context; the app's runtime stays up.
             bridge.nativeEphemeralShutdown()
         }
+
+        val result = output.lineSequence().lastOrNull { it.startsWith(RESULT_PREFIX) }
+            ?.let { runCatching { JSONObject(it.removePrefix(RESULT_PREFIX)) }.getOrNull() }
+
+        if (result?.optBoolean("ran") != true) {
+            Log.w(TAG, "Shortcut action failed: ${output.takeLast(300)}")
+            return Outcome.Failed
+        }
+
+        Outcome.Ran(result.optString("reply").takeIf { !result.isNull("reply") && it.isNotBlank() })
     }
 
     /** Every queued entry, oldest first, leaving the queue empty. */

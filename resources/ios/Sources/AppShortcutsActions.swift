@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 @_silgen_name("ephemeral_php_boot")
 private func _ephemeral_php_boot(_ bootstrapPath: UnsafePointer<CChar>?) -> Int32
@@ -14,13 +15,19 @@ private func _ephemeral_php_is_booted() -> Int32
 /// An action's intent runs in the app's process with no screen: iOS launches the app in the
 /// background when it is closed. NativePHP only boots PHP when a screen appears, so:
 ///
-/// - When the app's PHP is up, or booting, the action runs in NativePHP's ephemeral runtime, a PHP
-///   context beside the one native screens use, so a screen's run loop can't hold it up.
-/// - When the app is closed, the intent boots the app's PHP itself and runs the action there. Only
+/// - When the app is closed, the intent boots the app's own PHP and runs the action there. Only
 ///   when the extracted Laravel bundle is current: unpacking it needs setup that NativePHP keeps
 ///   private, and a DEBUG build unpacks on every launch.
+/// - When the app has a screen, or PHP is already up, the action runs in NativePHP's ephemeral
+///   runtime, a PHP context beside the one native screens use, once the app's PHP has booted.
 /// - Otherwise the action is queued, and PHP takes the queue through AppShortcuts.TakeQueued when
 ///   the first screen of a launch mounts, or straight away when a live screen hears ActionsQueued.
+///
+/// NativePHP boots PHP once per process, and a second boot started while the first runs fails, so
+/// the app and an intent must never both boot it. That is why a closed app's boot and action run
+/// on the main thread: NativePHP starts its own boot from the splash screen's onAppear, also on the
+/// main thread, so an app opened meanwhile waits and then finds PHP up. With a screen, the app is
+/// the one booting, and the intent waits for it.
 ///
 /// Intents run on the main actor and bridge functions on the PHP thread, so every queue read and
 /// write holds the lock. The queue file is readable after the first unlock since boot.
@@ -80,30 +87,65 @@ enum AppShortcutsActions {
     private static func artisan(_ command: String) -> String? {
         let bootstrap = AppUpdateManager.shared.getAppPath() + "/vendor/nativephp/mobile/bootstrap/ios/persistent.php"
 
-        // Waits for a boot in progress, and fails at once when the app's PHP never started.
-        let ephemeral = _ephemeral_php_is_booted() != 0 || bootstrap.withCString { _ephemeral_php_boot($0) } == 0
+        if _ephemeral_php_is_booted() == 0 {
+            switch DispatchQueue.main.sync(execute: { bootIfClosed(command) }) {
+            case .ran(let output):
+                return output
+            case .unavailable:
+                return nil
+            case .afterAppBoot:
+                // Fails at once until the app's boot starts, then waits for it to finish.
+                let deadline = Date().addingTimeInterval(10)
 
-        if ephemeral {
-            guard let result = command.withCString({ _ephemeral_php_artisan($0) }) else {
-                return ""
+                while bootstrap.withCString({ _ephemeral_php_boot($0) }) != 0 {
+                    guard Date() < deadline else {
+                        return nil
+                    }
+
+                    Thread.sleep(forTimeInterval: 0.25)
+                }
             }
-
-            defer { free(UnsafeMutableRawPointer(mutating: result)) }
-            return String(cString: result)
         }
 
-        guard !PersistentPHPRuntime.shared.isBooted, extractedAppIsCurrent() else {
-            return nil
+        guard let result = command.withCString({ _ephemeral_php_artisan($0) }) else {
+            return ""
+        }
+
+        defer { free(UnsafeMutableRawPointer(mutating: result)) }
+        return String(cString: result)
+    }
+
+    private enum ColdStart {
+        /// The app was closed: this booted its PHP and ran the command.
+        case ran(String)
+
+        /// The app has booted PHP, or will: run the command beside it once it has.
+        case afterAppBoot
+
+        /// PHP can't be booted here.
+        case unavailable
+    }
+
+    /// Boots the app's PHP and runs the command if the app is closed. Called on the main thread,
+    /// and holds it throughout, so the app can't start its own boot meanwhile.
+    private static func bootIfClosed(_ command: String) -> ColdStart {
+        // A scene means the splash has appeared, or is about to, and the app is booting PHP itself.
+        if PersistentPHPRuntime.shared.isBooted || !UIApplication.shared.connectedScenes.isEmpty {
+            return .afterAppBoot
+        }
+
+        guard NativePHPApp.getRuntimeMode() != "classic", extractedAppIsCurrent() else {
+            return .unavailable
         }
 
         setenv("NATIVEPHP_RUNNING", "true", 1)
 
         // The same runtime the app boots when it opens; it then finds it booted and carries on.
         guard PersistentPHPRuntime.shared.boot() else {
-            return nil
+            return .unavailable
         }
 
-        return PersistentPHPRuntime.shared.artisan(command: command)
+        return .ran(PersistentPHPRuntime.shared.artisan(command: command))
     }
 
     /// Whether the unpacked Laravel bundle is the one inside this build, so booting it needs no

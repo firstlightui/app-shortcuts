@@ -9,6 +9,7 @@ use FirstlightUI\AppShortcuts\ActionInvocation;
 use FirstlightUI\AppShortcuts\AppShortcuts;
 use FirstlightUI\AppShortcuts\Shortcut;
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Output\OutputInterface;
 use Throwable;
 
 /**
@@ -56,7 +57,13 @@ final class RunActionCommand extends Command
      */
     private function result(array $result): int
     {
-        $this->line(self::RESULT_PREFIX.json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
+        // At quiet verbosity, so it is printed even when the command runs quiet: Symfony Console takes
+        // its verbosity from the process-wide SHELL_VERBOSITY, which NativePHP's iOS queue worker sets
+        // to quiet on another thread while it runs `queue:work --quiet`.
+        $this->output->writeln(
+            self::RESULT_PREFIX.json_encode($result, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
+            OutputInterface::VERBOSITY_QUIET,
+        );
 
         return $result['ran'] === true ? self::SUCCESS : self::FAILURE;
     }
