@@ -2,7 +2,6 @@ package dev.firstlightui.plugins.app_shortcuts
 
 import android.content.Context
 import android.util.Log
-import com.nativephp.mobile.bridge.LaravelEnvironment
 import com.nativephp.mobile.bridge.PHPBridge
 import org.json.JSONArray
 import org.json.JSONObject
@@ -75,41 +74,24 @@ object ShortcutActions {
      */
     fun run(context: Context, id: String): Outcome = synchronized(runLock) {
         val appContext = context.applicationContext
-        val bridge = PHPBridge(appContext)
 
-        // A classic-mode app runs PHP per request and never boots the persistent runtime.
-        if (LaravelEnvironment.getRuntimeMode(appContext) == "classic") {
+        // Boots the app's PHP when it is closed, waits for the app's boot when it is booting, and
+        // reuses it when it is up. False in classic mode or when PHP can't start.
+        if (!PHPBridge.bootRuntime(appContext)) {
             return Outcome.Queued
         }
 
-        val booted = try {
-            // With the app closed, this sets up PHP's environment and unpacks the Laravel bundle
-            // if needed, as NativePHP does for its own background work. A no-op when PHP is up.
-            LaravelEnvironment(appContext).initializeForBackground()
-            bridge.bootPersistentRuntime()
-        } catch (e: RuntimeException) {
-            Log.e(TAG, "Could not start PHP for a shortcut action", e)
-            false
-        }
+        // Taken out only now, so it is still queued if PHP couldn't start or the process ends.
+        val entry = claim(appContext, id) ?: return Outcome.Ran(null)
 
-        if (!booted) {
+        val output = PHPBridge.runArtisan(
+            appContext,
+            "app-shortcuts:run --shortcut=${entry.getString("shortcut")} --id=${entry.getString("id")} --at=${entry.getLong("at")}",
+        )
+
+        if (output == null) {
+            requeue(appContext, entry)
             return Outcome.Queued
-        }
-
-        if (bridge.nativeEphemeralBoot(bridge.getLaravelPath() + "/vendor/nativephp/mobile/bootstrap/android/persistent.php") != 0) {
-            return Outcome.Queued
-        }
-
-        val output = try {
-            // Taken out only now, so it is still queued if anything above failed or the process ends.
-            val entry = claim(appContext, id) ?: return Outcome.Ran(null)
-
-            bridge.nativeEphemeralArtisan(
-                "app-shortcuts:run --shortcut=${entry.getString("shortcut")} --id=${entry.getString("id")} --at=${entry.getLong("at")}",
-            )
-        } finally {
-            // Ends only this thread's PHP context; the app's runtime stays up.
-            bridge.nativeEphemeralShutdown()
         }
 
         val result = output.lineSequence().lastOrNull { it.startsWith(RESULT_PREFIX) }
@@ -121,6 +103,14 @@ object ShortcutActions {
         }
 
         Outcome.Ran(result.optString("reply").takeIf { !result.isNull("reply") && it.isNotBlank() })
+    }
+
+    /** Puts a claimed entry back, for PHP to take when the app next opens. */
+    @Synchronized
+    private fun requeue(context: Context, entry: JSONObject) {
+        val entries = read(context)
+        entries.put(entry)
+        save(context, entries)
     }
 
     /** Every queued entry, oldest first, leaving the queue empty. */
