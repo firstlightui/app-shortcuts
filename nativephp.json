@@ -34,7 +34,7 @@
     },
     "android": {
         "min_version": 26,
-        "permissions": [],
+        "permissions": ["android.permission.POST_NOTIFICATIONS"],
         "dependencies": {
             "implementation": []
         }
