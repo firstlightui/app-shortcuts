@@ -5,6 +5,9 @@ import android.app.Activity
 import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -127,12 +130,28 @@ class ShortcutTrampolineActivity : Activity() {
         }
     }
 
+    /** A white spinner on a dark card, so it shows over a light wallpaper or the open shortcut menu. */
     private fun showSpinner() {
         val themed = ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault)
+        val dp = resources.displayMetrics.density
+        val padding = (20 * dp).toInt()
+        val size = (40 * dp).toInt()
+
+        val card = FrameLayout(this).apply {
+            background = GradientDrawable().apply {
+                setColor(0xE6202124.toInt())
+                cornerRadius = 20 * dp
+            }
+            elevation = 8 * dp
+            setPadding(padding, padding, padding, padding)
+            addView(ProgressBar(themed).apply {
+                indeterminateTintList = ColorStateList.valueOf(Color.WHITE)
+            }, FrameLayout.LayoutParams(size, size))
+        }
 
         setContentView(
             FrameLayout(this).apply {
-                addView(ProgressBar(themed), FrameLayout.LayoutParams(
+                addView(card, FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.WRAP_CONTENT,
                     FrameLayout.LayoutParams.WRAP_CONTENT,
                     Gravity.CENTER,

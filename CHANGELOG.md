@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Android: the spinner a shortcut shows while notifications are off is white on a dark rounded card, so it shows over a light wallpaper and the open shortcut menu. It was a pale ring with no background.
+
 ## 1.0.0-alpha1 - 2026-11-16
 
 - Shortcuts from `config/app-shortcuts.php`: App Intents and Siri phrases, Spotlight and Shortcuts-app actions, and Home Screen quick actions on iOS; static launcher shortcuts on Android. Each opens a named route.
