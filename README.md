@@ -20,7 +20,7 @@ Composer package `firstlightui/app-shortcuts`, PHP namespace `FirstlightUI\AppSh
 ## Install
 
 ```bash
-composer require firstlightui/app-shortcuts
+composer require "firstlightui/app-shortcuts:^1.0@alpha"
 php artisan native:plugin:register firstlightui/app-shortcuts
 php artisan vendor:publish --tag=app-shortcuts-config
 ```
