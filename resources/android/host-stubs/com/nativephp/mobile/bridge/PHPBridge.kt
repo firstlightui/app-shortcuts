@@ -12,6 +12,12 @@ class PHPBridge(private val context: Context) {
     fun bootPersistentRuntime(): Boolean = false
 
     fun getLaravelPath(): String = ""
+
+    companion object {
+        fun bootRuntime(context: Context): Boolean = false
+
+        fun runArtisan(context: Context, command: String): String? = null
+    }
 }
 
 class LaravelEnvironment(private val context: Context) {
