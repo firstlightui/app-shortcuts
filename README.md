@@ -107,7 +107,7 @@ PHP is the app's own, and boots once. If the app opens while an action is bootin
 
 The action is queued instead, and runs on the first screen of the next launch, when PHP can't start in the background:
 
-- On iOS, in a debug build, which unpacks its Laravel bundle at every launch, and after an over-the-air update until the app has opened once, since unpacking needs setup NativePHP keeps private.
+- On iOS, until the app has opened once after it is installed or updated over the air, since unpacking its Laravel bundle needs setup NativePHP keeps private, and in a build whose `NATIVEPHP_APP_VERSION` is unset or `DEBUG`, which unpacks the bundle at every launch.
 - In an app using NativePHP's classic runtime mode.
 - When PHP fails to boot, or the app takes more than about 10 seconds to boot it. On Android the app then opens to run it.
 
