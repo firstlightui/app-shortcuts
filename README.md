@@ -101,6 +101,8 @@ When the class runs:
 | Siri, Spotlight, the Shortcuts app, the Action button | The class runs straight away and Siri says its reply. The app stays out of sight, even when it was closed: iOS starts it in the background and the plugin boots PHP there, in about two seconds. | No equivalent. |
 | The long-press menu | The app opens and the class runs on the screen it shows. | The class runs straight away in the background, whether or not the app was running, and its reply shows as a toast. |
 
+On Android 13 and later, a toast from an app with no window on screen shows only if the app may post notifications, so the plugin declares `POST_NOTIFICATIONS`. The first action anyone runs asks for it, once, and the action runs while the prompt is up. Whenever notifications are off, the long-press menu shows a spinner until the reply is ready, so the toast still shows. An app that asks for notifications itself, for push, is never asked again.
+
 PHP is the app's own, and boots once. If the app opens while an action is booting PHP, its splash screen waits a moment and then finds PHP running. An action used while the app is starting waits for the app's PHP instead of booting a second one.
 
 The action is queued instead, and runs on the first screen of the next launch, when PHP can't start in the background:
