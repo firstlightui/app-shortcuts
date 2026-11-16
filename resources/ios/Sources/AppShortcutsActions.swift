@@ -1,15 +1,6 @@
 import Foundation
 import UIKit
 
-@_silgen_name("ephemeral_php_boot")
-private func _ephemeral_php_boot(_ bootstrapPath: UnsafePointer<CChar>?) -> Int32
-
-@_silgen_name("ephemeral_php_artisan")
-private func _ephemeral_php_artisan(_ command: UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
-
-@_silgen_name("ephemeral_php_is_booted")
-private func _ephemeral_php_is_booted() -> Int32
-
 /// Runs shortcut actions in PHP as their App Intents fire, and queues those PHP can't run then.
 ///
 /// An action's intent runs in the app's process with no screen: iOS launches the app in the
@@ -82,104 +73,11 @@ enum AppShortcutsActions {
         return (result["reply"] as? String) ?? reply ?? "Done."
     }
 
-    /// Runs an artisan command in the app's PHP, booting it if the app is closed. Nil when PHP is
-    /// not available, so nothing ran.
+    /// Runs an artisan command in the app's PHP through NativePHP's runArtisan, which boots PHP
+    /// when the app is closed (unpacking the bundle if needed) or waits for the app's own boot.
+    /// Nil when PHP is not available, so nothing ran.
     private static func artisan(_ command: String) -> String? {
-        let bootstrap = AppUpdateManager.shared.getAppPath() + "/vendor/nativephp/mobile/bootstrap/ios/persistent.php"
-
-        if _ephemeral_php_is_booted() == 0 {
-            switch DispatchQueue.main.sync(execute: { bootIfClosed(command) }) {
-            case .ran(let output):
-                return output
-            case .unavailable:
-                return nil
-            case .afterAppBoot:
-                // Fails at once until the app's boot starts, then waits for it to finish.
-                let deadline = Date().addingTimeInterval(10)
-
-                while bootstrap.withCString({ _ephemeral_php_boot($0) }) != 0 {
-                    guard Date() < deadline else {
-                        return nil
-                    }
-
-                    Thread.sleep(forTimeInterval: 0.25)
-                }
-            }
-        }
-
-        guard let result = command.withCString({ _ephemeral_php_artisan($0) }) else {
-            return ""
-        }
-
-        defer { free(UnsafeMutableRawPointer(mutating: result)) }
-        return String(cString: result)
-    }
-
-    private enum ColdStart {
-        /// The app was closed: this booted its PHP and ran the command.
-        case ran(String)
-
-        /// The app has booted PHP, or will: run the command beside it once it has.
-        case afterAppBoot
-
-        /// PHP can't be booted here.
-        case unavailable
-    }
-
-    /// Boots the app's PHP and runs the command if the app is closed. Called on the main thread,
-    /// and holds it throughout, so the app can't start its own boot meanwhile.
-    private static func bootIfClosed(_ command: String) -> ColdStart {
-        // A scene means the splash has appeared, or is about to, and the app is booting PHP itself.
-        if PersistentPHPRuntime.shared.isBooted || !UIApplication.shared.connectedScenes.isEmpty {
-            return .afterAppBoot
-        }
-
-        guard NativePHPApp.getRuntimeMode() != "classic", extractedAppIsCurrent() else {
-            return .unavailable
-        }
-
-        setenv("NATIVEPHP_RUNNING", "true", 1)
-
-        // The same runtime the app boots when it opens; it then finds it booted and carries on.
-        guard PersistentPHPRuntime.shared.boot() else {
-            return .unavailable
-        }
-
-        return .ran(PersistentPHPRuntime.shared.artisan(command: command))
-    }
-
-    /// Whether the unpacked Laravel bundle is the one inside this build, so booting it needs no
-    /// unpacking first. Mirrors NativePHP's AppUpdateManager, which keeps these checks private.
-    private static func extractedAppIsCurrent() -> Bool {
-        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-
-        guard let installed = try? String(contentsOfFile: AppUpdateManager.shared.getAppPath() + "/installed.version", encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !installed.isEmpty,
-              installed.caseInsensitiveCompare("DEBUG") != .orderedSame,
-              installed == bundledVersion(),
-              !FileManager.default.fileExists(atPath: documents.appendingPathComponent("updates/pending.zip").path) else {
-            return false
-        }
-
-        return true
-    }
-
-    private static func bundledVersion() -> String? {
-        if let path = Bundle.main.path(forResource: "bundle_meta", ofType: "json"),
-           let data = FileManager.default.contents(atPath: path),
-           let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let version = meta["version"] as? String {
-            let code = (meta["version_code"] as? NSNumber)?.intValue
-                ?? Int(((meta["version_code"] as? String) ?? "").trimmingCharacters(in: .whitespaces))
-                ?? 0
-
-            return version.uppercased() == "DEBUG" ? "DEBUG" : "\(version)b\(code)"
-        }
-
-        return Bundle.main.path(forResource: "bundled", ofType: "version")
-            .flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        NativePHPApp.runArtisan(command, timeout: 10)
     }
 
     private static func parse(_ output: String) -> [String: Any]? {
